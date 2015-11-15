@@ -8,14 +8,18 @@ import akka.stream.ActorMaterializer
 import spray.json._
 
 case class Strategy(strategy: String, team: String)
+case class ExposureRow(group: String, exposure: Int)
+case class Exposure(strategy: String, team: String, exposure: Int)
 
 object Marshallers extends DefaultJsonProtocol {
-  implicit val strategyMarshaller = jsonFormat2(Strategy)
+  implicit val exposureRowMarshaller = jsonFormat2(ExposureRow)
 }
 
 object Server extends App with SprayJsonSupport {
-  val data = List(Strategy("SAa", "A"), Strategy("SAb", "A"), Strategy("SAc", "A")
-    , Strategy("TBa", "B"), Strategy("TBb", "B"))
+  val teams = List(Strategy("SAa", "A"), Strategy("SAb", "A"), Strategy("SAc", "A")
+    , Strategy("SBa", "B"), Strategy("SBb", "B")).map { case Strategy(s, t) => s -> t}.toMap
+  val exposure = Map("SAa" -> 1, "SAb" -> 2, "SAc" -> 3, "SBa" -> 10, "SBb" -> 11)
+  val exposureFacts = exposure.map { case (s, v) => Exposure(s, teams(s), v)}
 
   implicit val system = ActorSystem()
   implicit val materializer = ActorMaterializer()
@@ -25,12 +29,21 @@ object Server extends App with SprayJsonSupport {
   val route =
     path("") {
       get {
-        parameters('team?) { team =>
+        parameters('team?, 'strategy?, 'group) { (team, strategy, group) =>
           complete {
-            val d = team.map { team =>
-              data.filter(_.team == team)
-            } getOrElse data
-            d.toJson
+            val es = exposureFacts.filter { case Exposure(s, t, _) =>
+              team.map(team => t == team).getOrElse(true) &&
+              strategy.map(strategy => s == strategy).getOrElse(true)
+            }
+
+            val r =
+              (group match {
+                case "team" => es.groupBy(exp => exp.team)
+                case "strategy" => es.groupBy(exp => exp.strategy)
+                case "product" => es.groupBy(exp => exp.strategy)
+              }) map { case (g, v) => ExposureRow(g, v.map(_.exposure).sum)}
+
+            r.toList.toJson
           }
         }
       }
